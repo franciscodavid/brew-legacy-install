@@ -4,7 +4,6 @@
 # anywhere you like.
 HOMEBREW_PREFIX = "/usr/local".freeze
 HOMEBREW_REPOSITORY = "/usr/local/Homebrew".freeze
-HOMEBREW_CORE_TAP = "/usr/local/Homebrew/Library/Taps/homebrew/homebrew-core".freeze
 HOMEBREW_CACHE = "#{ENV["HOME"]}/Library/Caches/Homebrew".freeze
 BREW_REPO = "https://github.com/franciscodavid/brew-legacy".freeze
 
@@ -145,6 +144,9 @@ def chgrp?(path)
   !File.grpowned?(path)
 end
 
+# USER isn't always set so provide a fall back for the installer and subprocesses.
+ENV["USER"] ||= `id -un`.chomp
+
 # Invalidate sudo timestamp before exiting (if it wasn't active before).
 Kernel.system "/usr/bin/sudo -n -v 2>/dev/null"
 at_exit { Kernel.system "/usr/bin/sudo", "-k" } unless $CHILD_STATUS.success?
@@ -193,10 +195,10 @@ elsif macos_version > MACOS_LATEST_SUPPORTED || macos_version < MACOS_OLDEST_SUP
 
   puts <<-EOS
 This installation may not succeed.
-After installation, you will encounter build failures and other breakages.
-Please create pull requests instead of asking for help on Homebrew's
-GitHub, Discourse, Twitter or IRC. As you are running this #{what},
-you are responsible for resolving any issues you experience.
+After installation, you will encounter build failures with some formulae.
+Please create pull requests instead of asking for help on Homebrew's GitHub,
+Discourse, Twitter or IRC. You are responsible for resolving any issues you
+experience while you are running this #{what}.
 
   EOS
 end
@@ -285,6 +287,7 @@ sudo "/bin/mkdir", "-p", HOMEBREW_CACHE unless File.directory? HOMEBREW_CACHE
 sudo "/bin/chmod", "g+rwx", HOMEBREW_CACHE if chmod? HOMEBREW_CACHE
 sudo "/usr/sbin/chown", ENV["USER"], HOMEBREW_CACHE if chown? HOMEBREW_CACHE
 sudo "/usr/bin/chgrp", "admin", HOMEBREW_CACHE if chgrp? HOMEBREW_CACHE
+system "/usr/bin/touch", "#{HOMEBREW_CACHE}/.cleaned" if File.directory? HOMEBREW_CACHE
 
 if should_install_command_line_tools?
   ohai "Searching online for the Command Line Tools"
