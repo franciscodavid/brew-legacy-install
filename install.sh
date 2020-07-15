@@ -6,6 +6,11 @@ if [[ "$(uname)" = "Linux" ]]; then
   HOMEBREW_ON_LINUX=1
 fi
 
+# Check if macOS is ARM
+if [[ "$(uname)" = "Darwin" ]] && [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo '0')" = "1" ]]; then
+  HOMEBREW_APPLE_SILICON=1
+fi
+
 # On macOS, this script installs to /usr/local only.
 # On Linux, it installs to /home/linuxbrew/.linuxbrew if you have sudo access
 # and ~/.linuxbrew otherwise.
@@ -21,6 +26,7 @@ if [[ -z "${HOMEBREW_ON_LINUX-}" ]]; then
   CHOWN="/usr/sbin/chown"
   CHGRP="/usr/bin/chgrp"
   GROUP="admin"
+  TOUCH="/usr/bin/touch"
 else
   HOMEBREW_PREFIX_DEFAULT="/home/linuxbrew/.linuxbrew"
   HOMEBREW_CACHE="${HOME}/.cache/Homebrew"
@@ -29,6 +35,7 @@ else
   CHOWN="/bin/chown"
   CHGRP="/bin/chgrp"
   GROUP="$(id -gn)"
+  TOUCH="/bin/touch"
 fi
 BREW_REPO="https://github.com/franciscodavid/brew-legacy"
 
@@ -36,6 +43,10 @@ BREW_REPO="https://github.com/franciscodavid/brew-legacy"
 MACOS_LATEST_SUPPORTED="10.15"
 # TODO: bump version when new macOS is released
 MACOS_OLDEST_SUPPORTED="10.13"
+
+# For Homebrew on Linux
+REQUIRED_RUBY_VERSION=2.6  # https://github.com/Homebrew/brew/pull/6556
+REQUIRED_GLIBC_VERSION=2.13  # https://docs.brew.sh/Homebrew-on-Linux#requirements
 
 # no analytics during installation
 export HOMEBREW_NO_ANALYTICS_THIS_RUN=1
@@ -55,13 +66,22 @@ tty_bold="$(tty_mkbold 39)"
 tty_reset="$(tty_escape 0)"
 
 have_sudo_access() {
+  local -a args
+  if [[ -n "${SUDO_ASKPASS-}" ]]; then
+    args=("-A")
+  fi
+
   if [[ -z "${HAVE_SUDO_ACCESS-}" ]]; then
-    /usr/bin/sudo -l mkdir &>/dev/null
+    if [[ -n "${args[*]-}" ]]; then
+      /usr/bin/sudo "${args[@]}" -l mkdir &>/dev/null
+    else
+      /usr/bin/sudo -l mkdir &>/dev/null
+    fi
     HAVE_SUDO_ACCESS="$?"
   fi
 
   if [[ -z "${HOMEBREW_ON_LINUX-}" ]] && [[ "$HAVE_SUDO_ACCESS" -ne 0 ]]; then
-    abort "Need sudo access on macOS!"
+    abort "Need sudo access on macOS (e.g. the user $USER to be an Administrator)!"
   fi
 
   return "$HAVE_SUDO_ACCESS"
@@ -162,6 +182,10 @@ should_install_command_line_tools() {
     return 1
   fi
 
+  if [[ -n "${HOMEBREW_APPLE_SILICON-}" ]]; then
+    return 1;
+  fi
+
   if version_gt "$macos_version" "10.13"; then
     ! [[ -e "/Library/Developer/CommandLineTools/usr/bin/git" ]]
   else
@@ -198,6 +222,48 @@ file_not_grpowned() {
   [[ " $(id -G "$USER") " != *" $(get_group "$1") "*  ]]
 }
 
+# Please sync with 'test_ruby()' in 'Library/Homebrew/utils/ruby.sh' from Homebrew/brew repository.
+test_ruby () {
+  if [[ ! -x $1 ]]
+  then
+    return 1
+  fi
+
+  "$1" --enable-frozen-string-literal --disable=gems,did_you_mean,rubyopt -rrubygems -e \
+    "abort if Gem::Version.new(RUBY_VERSION.to_s.dup).to_s.split('.').first(2) != \
+              Gem::Version.new('$REQUIRED_RUBY_VERSION').to_s.split('.').first(2)" 2>/dev/null
+}
+
+no_usable_ruby() {
+  local ruby_exec
+  IFS=$'\n' # Do word splitting on new lines only
+  for ruby_exec in $(which -a ruby); do
+    if test_ruby "$ruby_exec"; then
+      return 1
+    fi
+  done
+  IFS=$' \t\n' # Restore IFS to its default value
+  return 0
+}
+
+outdated_glibc() {
+  local glibc_version
+  glibc_version=$(ldd --version | head -n1 | grep -o '[0-9.]*$' | grep -o '^[0-9]\+\.[0-9]\+')
+  version_lt "$glibc_version" "$REQUIRED_GLIBC_VERSION"
+}
+
+if [[ -n "${HOMEBREW_ON_LINUX-}" ]] && no_usable_ruby && outdated_glibc
+then
+    abort "$(cat <<-EOFABORT
+	Homebrew requires Ruby $REQUIRED_RUBY_VERSION which was not found on your system.
+	Homebrew portable Ruby requires Glibc version $REQUIRED_GLIBC_VERSION or newer,
+	and your Glibc version is too old.
+	See ${tty_underline}https://docs.brew.sh/Homebrew-on-Linux#requirements${tty_reset}
+	Install Ruby $REQUIRED_RUBY_VERSION and add its location to your PATH.
+	EOFABORT
+    )"
+fi
+
 # USER isn't always set so provide a fall back for the installer and subprocesses.
 if [[ -z "${USER-}" ]]; then
   USER="$(chomp "$(id -un)")"
@@ -222,14 +288,14 @@ EOABORT
 )"
 fi
 
-if [[ -n "${HOMEBREW_ON_LINUX-}" ]]; then
+if [[ -z "${HOMEBREW_ON_LINUX-}" ]]; then
+ have_sudo_access
+else
   if [[ -n "${CI-}" ]] || [[ -w "$HOMEBREW_PREFIX_DEFAULT" ]] || [[ -w "/home/linuxbrew" ]] || [[ -w "/home" ]]; then
     HOMEBREW_PREFIX="$HOMEBREW_PREFIX_DEFAULT"
   else
     trap exit SIGINT
-    sudo_output="$(/usr/bin/sudo -n -l mkdir 2>&1)"
-    sudo_exit_code="$?"
-    if [[ "$sudo_exit_code" -ne 0 ]] && [[ "$sudo_output" = "sudo: a password is required" ]]; then
+    if [[ $(/usr/bin/sudo -n -l mkdir 2>&1) != *"mkdir"* ]]; then
       ohai "Select the Homebrew installation directory"
       echo "- ${tty_bold}Enter your password${tty_reset} to install to ${tty_underline}${HOMEBREW_PREFIX_DEFAULT}${tty_reset} (${tty_bold}recommended${tty_reset})"
       echo "- ${tty_bold}Press Control-D${tty_reset} to install to ${tty_underline}$HOME/.linuxbrew${tty_reset}"
@@ -266,8 +332,6 @@ EOABORT
 )"
   elif version_lt "$macos_version" "10.9"; then
     abort "Your OS X version is too old"
-  elif ! [[ "$(dsmemberutil checkmembership -U "$USER" -G "$GROUP")" = *"user is a member"* ]]; then
-    abort "This script requires the user $USER to be an Administrator."
   elif version_gt "$macos_version" "$MACOS_LATEST_SUPPORTED" || \
     version_lt "$macos_version" "$MACOS_OLDEST_SUPPORTED"; then
     who="We"
@@ -444,14 +508,14 @@ if file_not_grpowned "${HOMEBREW_CACHE}"; then
   execute_sudo "$CHGRP" "$GROUP" "${HOMEBREW_CACHE}"
 fi
 if [[ -d "${HOMEBREW_CACHE}" ]]; then
-  execute "/usr/bin/touch" "${HOMEBREW_CACHE}/.cleaned"
+  execute "$TOUCH" "${HOMEBREW_CACHE}/.cleaned"
 fi
 
 if should_install_command_line_tools && version_ge "$macos_version" "10.13"; then
   ohai "Searching online for the Command Line Tools"
   # This temporary file prompts the 'softwareupdate' utility to list the Command Line Tools
   clt_placeholder="/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress"
-  execute_sudo "/usr/bin/touch" "$clt_placeholder"
+  execute_sudo "$TOUCH" "$clt_placeholder"
 
   clt_label_command="/usr/sbin/softwareupdate -l |
                       grep -B 1 -E 'Command Line Tools' |
@@ -510,7 +574,7 @@ ohai "Downloading and installing Homebrew..."
   execute "ln" "-sf" "${HOMEBREW_REPOSITORY}/bin/brew" "${HOMEBREW_PREFIX}/bin/brew"
 
   execute "${HOMEBREW_PREFIX}/bin/brew" "update" "--force"
-)
+) || exit 1
 
 if [[ ":${PATH}:" != *":${HOMEBREW_PREFIX}/bin:"* ]]; then
   warn "${HOMEBREW_PREFIX}/bin is not in your PATH."
@@ -545,7 +609,7 @@ EOS
   cd "${HOMEBREW_REPOSITORY}" >/dev/null || return
   execute "git" "config" "--replace-all" "homebrew.analyticsmessage" "true"
   execute "git" "config" "--replace-all" "homebrew.caskanalyticsmessage" "true"
-)
+) || exit 1
 
 ohai "Next steps:"
 echo "- Run \`brew help\` to get started"

@@ -15,27 +15,11 @@ jobs:
     - name: Set up Git repository
       uses: actions/checkout@master
 
-    - name: Set up Ruby
-      if: runner.os == 'Linux'
-      uses: actions/setup-ruby@v1
-      with:
-        ruby-version: 2.6
-
-    - name: Install RubyGems
-      run: |
-        gem install bundler -v "~>1"
-        bundle install --retry=3 --jobs=4
-
-    - name: Run RuboCop
-      run: |
-        bundle exec rubocop
-
     - name: Cleanup macOS
       if: runner.os == 'macOS'
       run: |
         sudo rm -rf /Applications/Xcode.app \
                     /Library/Developer/CommandLineTools
-        sudo pkgutil --forget com.apple.pkg.CLTools_Executables
         sudo xcode-select --reset
 
     - name: Set up Homebrew PATH
@@ -46,17 +30,18 @@ jobs:
           echo "::add-path::/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin"
         fi
 
-    - name: Test uninstalling GitHub Actions macOS Homebrew
-      if: runner.os == 'macOS'
+    - name: Test uninstalling GitHub Actions Homebrew
       run: |
-        ruby uninstall -d >/dev/null
-        ruby uninstall -f >/dev/null
+        if which brew &>/dev/null; then
+          bash uninstall.sh -d >/dev/null
+          bash uninstall.sh -f >/dev/null
+        fi
 
     - name: Test install.sh
       run: |
         bash install.sh
         brew install ack
-        ruby uninstall -f >/dev/null
+        bash uninstall.sh -f >/dev/null
         bash install.sh
 
     - name: Install Shellcheck
@@ -67,5 +52,5 @@ jobs:
 
     - name: Test uninstalling newly installed Homebrew
       run: |
-        ruby uninstall -d >/dev/null
-        ruby uninstall -f >/dev/null
+        bash uninstall.sh -d >/dev/null
+        bash uninstall.sh -f >/dev/null
