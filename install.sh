@@ -6,11 +6,6 @@ if [[ "$(uname)" = "Linux" ]]; then
   HOMEBREW_ON_LINUX=1
 fi
 
-# Check if macOS is ARM
-if [[ "$(uname)" = "Darwin" ]] && [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo '0')" = "1" ]]; then
-  HOMEBREW_APPLE_SILICON=1
-fi
-
 # On macOS, this script installs to /usr/local only.
 # On Linux, it installs to /home/linuxbrew/.linuxbrew if you have sudo access
 # and ~/.linuxbrew otherwise.
@@ -171,19 +166,9 @@ version_lt() {
   [[ "${1%.*}" -lt "${2%.*}" ]] || [[ "${1%.*}" -eq "${2%.*}" && "${1#*.}" -lt "${2#*.}" ]]
 }
 
-should_install_git() {
-  if [[ $(command -v git) ]]; then
-    return 1
-  fi
-}
-
 should_install_command_line_tools() {
   if [[ -n "${HOMEBREW_ON_LINUX-}" ]]; then
     return 1
-  fi
-
-  if [[ -n "${HOMEBREW_APPLE_SILICON-}" ]]; then
-    return 1;
   fi
 
   if version_gt "$macos_version" "10.13"; then
@@ -236,13 +221,11 @@ test_ruby () {
 
 no_usable_ruby() {
   local ruby_exec
-  IFS=$'\n' # Do word splitting on new lines only
-  for ruby_exec in $(which -a ruby); do
+  which -a ruby | while read -r ruby_exec; do
     if test_ruby "$ruby_exec"; then
       return 1
     fi
   done
-  IFS=$' \t\n' # Restore IFS to its default value
   return 0
 }
 
@@ -280,9 +263,17 @@ fi
 cd "/usr" || exit 1
 
 ####################################################################### script
-if should_install_git; then
+if ! command -v git >/dev/null; then
     abort "$(cat <<EOABORT
 You must install Git before installing Homebrew. See:
+  ${tty_underline}https://docs.brew.sh/Installation${tty_reset}
+EOABORT
+)"
+fi
+
+if ! command -v curl >/dev/null; then
+    abort "$(cat <<EOABORT
+You must install cURL before installing Homebrew. See:
   ${tty_underline}https://docs.brew.sh/Installation${tty_reset}
 EOABORT
 )"
@@ -330,7 +321,7 @@ Your Mac OS X version is too old. See:
   ${tty_underline}https://github.com/mistydemeo/tigerbrew${tty_reset}
 EOABORT
 )"
-  elif version_lt "$macos_version" "10.9"; then
+  elif version_lt "$macos_version" "10.10"; then
     abort "Your OS X version is too old"
   elif version_gt "$macos_version" "$MACOS_LATEST_SUPPORTED" || \
     version_lt "$macos_version" "$MACOS_OLDEST_SUPPORTED"; then
@@ -633,18 +624,24 @@ if [[ -n "${HOMEBREW_ON_LINUX-}" ]]; then
       ;;
   esac
 
+  echo "- Install the Homebrew dependencies if you have sudo access:"
+
+  if [[ $(command -v apt-get) ]]; then
+    echo "    sudo apt-get install build-essential"
+  elif [[ $(command -v yum) ]]; then
+    echo "    sudo yum groupinstall 'Development Tools'"
+  elif [[ $(command -v pacman) ]]; then
+    echo "    sudo pacman -S base-devel"
+  elif [[ $(command -v apk) ]]; then
+    echo "    sudo apk add build-base"
+  fi
+
   cat <<EOS
-- Install the Homebrew dependencies if you have sudo access:
-  ${tty_bold}Debian, Ubuntu, etc.${tty_reset}
-    sudo apt-get install build-essential
-  ${tty_bold}Fedora, Red Hat, CentOS, etc.${tty_reset}
-    sudo yum groupinstall 'Development Tools'
-  See ${tty_underline}https://docs.brew.sh/linux${tty_reset} for more information.
-- Configure Homebrew in your ${tty_underline}${shell_profile}${tty_reset} by running
+    See ${tty_underline}https://docs.brew.sh/linux${tty_reset} for more information
+- Add Homebrew to your ${tty_bold}PATH${tty_reset} in ${tty_underline}${shell_profile}${tty_reset}:
     echo 'eval \$(${HOMEBREW_PREFIX}/bin/brew shellenv)' >> ${shell_profile}
-- Add Homebrew to your ${tty_bold}PATH${tty_reset}
     eval \$(${HOMEBREW_PREFIX}/bin/brew shellenv)
-- We recommend that you install GCC by running:
+- We recommend that you install GCC:
     brew install gcc
 
 EOS
