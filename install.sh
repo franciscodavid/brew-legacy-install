@@ -34,10 +34,10 @@ else
 fi
 BREW_REPO="https://github.com/franciscodavid/brew-legacy"
 
+# TODO: bump version when new macOS is released or announced
+MACOS_NEWEST_UNSUPPORTED="12.0"
 # TODO: bump version when new macOS is released
-MACOS_LATEST_SUPPORTED="10.15"
-# TODO: bump version when new macOS is released
-MACOS_OLDEST_SUPPORTED="10.13"
+MACOS_OLDEST_SUPPORTED="10.14"
 
 # For Homebrew on Linux
 REQUIRED_RUBY_VERSION=2.6  # https://github.com/Homebrew/brew/pull/6556
@@ -317,6 +317,22 @@ EOABORT
 )"
 fi
 
+UNAME_MACHINE="$(uname -m)"
+
+if [[ -z "${HOMEBREW_ON_LINUX-}" ]] && [[ "$UNAME_MACHINE" == "arm64" ]]; then
+  abort "$(cat <<EOABORT
+Homebrew is not (yet) supported on ARM processors!
+Rerun the Homebrew installer under Rosetta 2.
+If you really know what you are doing and are prepared for a very broken experience you can use another installation option for installing on ARM:
+  ${tty_underline}https://docs.brew.sh/Installation${tty_reset}
+EOABORT
+)"
+fi
+
+if [[ "$UNAME_MACHINE" != "x86_64" ]]; then
+  abort "Homebrew is only supported on Intel processors!"
+fi
+
 if [[ -z "${HOMEBREW_ON_LINUX-}" ]]; then
   if version_lt "$macos_version" "10.7"; then
     abort "$(cat <<EOABORT
@@ -326,11 +342,11 @@ EOABORT
 )"
   elif version_lt "$macos_version" "10.10"; then
     abort "Your OS X version is too old"
-  elif version_gt "$macos_version" "$MACOS_LATEST_SUPPORTED" || \
+  elif version_ge "$macos_version" "$MACOS_NEWEST_UNSUPPORTED" || \
     version_lt "$macos_version" "$MACOS_OLDEST_SUPPORTED"; then
     who="We"
     what=""
-    if version_gt "$macos_version" "$MACOS_LATEST_SUPPORTED"; then
+    if version_ge "$macos_version" "$MACOS_NEWEST_UNSUPPORTED"; then
       what="pre-release version"
     else
       who+=" (and Apple)"
